@@ -12,8 +12,10 @@ import (
 
 var page Page
 
+var data156 = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
 func TestTupleCnt(t *testing.T) {
-	assert.Lenf(t, page.Slots, 3, "expected 3, got %d", len(page.Slots))
+	assert.Lenf(t, page.Slots, 4, "expected 4, got %d", len(page.Slots))
 }
 
 func TestSlotOffset(t *testing.T) {
@@ -57,6 +59,15 @@ func TestTupleHeader(t *testing.T) {
 	}
 	for i := 0; i < 17; i++ {
 		assert.Equal(t, thirdTupleHeader.NullBits[i], notNullMapper[i])
+	}
+	fourthTupleHeader := page.Tuples[3].Header
+	notNullMapper = map[int]uint8{
+		0:  1,
+		15: 1,
+		16: 1,
+	}
+	for i := 0; i < 17; i++ {
+		assert.Equal(t, fourthTupleHeader.NullBits[i], notNullMapper[i])
 	}
 }
 
@@ -105,6 +116,21 @@ func TestTupleData(t *testing.T) {
 			assert.Equal(t, v, gv)
 		}
 	}
+
+	foutrhTupleData := page.Tuples[3].Data
+	notNullMapper = map[string]string{
+		"id":  "4",
+		"f15": data156,
+		"f16": "4",
+	}
+	for k, v := range foutrhTupleData {
+		gv, ok := notNullMapper[k]
+		if !ok {
+			assert.Equal(t, v, "NULL")
+		} else {
+			assert.Equal(t, v, gv)
+		}
+	}
 }
 
 func TestMain(m *testing.M) {
@@ -120,26 +146,26 @@ func TestMain(m *testing.M) {
 	// test dataset !!!
 	// conn.Exec(context.Background(), "DROP TABLE test;")
 	// createSQL := `
-	// 		CREATE TABLE test (
-	// 			id serial,
-	// 			f1 int,
-	// 			f2 int,
-	// 			f3 int,
-	// 			f4 int,
-	// 			f5 int,
-	// 			f6 int,
-	// 			f7 int,
-	// 			f8 int,
-	// 			f9 int,
-	// 			f10 int,
-	// 			f11 int,
-	// 			f12 int,
-	// 			f13 int,
-	// 			f14 int,
-	// 			f15 text,
-	// 			f16 int
-	// 		);
-	// 		`
+	//  		CREATE TABLE test (
+	//  			id serial,
+	//  			f1 int,
+	//  			f2 int,
+	//  			f3 int,
+	//  			f4 int,
+	//  			f5 int,
+	//  			f6 int,
+	//  			f7 int,
+	//  			f8 int,
+	//  			f9 int,
+	//  			f10 int,
+	//  			f11 int,
+	//  			f12 int,
+	//  			f13 int,
+	//  			f14 int,
+	//  			f15 text,
+	//  			f16 int
+	//  		);
+	//  		`
 	// _, err = conn.Exec(context.Background(), createSQL)
 	// if err != nil {
 	// 	panic(err)
@@ -157,6 +183,12 @@ func TestMain(m *testing.M) {
 	// if err != nil {
 	// 	panic(err)
 	// }
+	// _, err = conn.Exec(context.Background(), fmt.Sprintf("INSERT INTO test(f15, f16) VALUES ('%s', 4)", data156))
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	// panic("for insert")
 
 	var oid uint32
 	row := conn.QueryRow(context.Background(), `SELECT oid FROM pg_class WHERE relname='test'`)

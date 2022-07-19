@@ -147,7 +147,7 @@ func ParseTupleData(alignments []AttrAlign, th *TupleHeader, bins []byte) (map[s
 		case "text":
 			text := ParseVarlena(bins[offset:])
 			alignments[idx].TypLen = text.GetLength()
-			return item.AttName, string(text.Bytes), getNextOffset()
+			return item.AttName, string(text.GetData()), getNextOffset()
 		}
 		panic("does not support")
 	}
