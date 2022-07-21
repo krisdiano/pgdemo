@@ -4,18 +4,23 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/krisdiano/pgdemo/heaptuple/testdata"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 )
 
-var page Page
-
-var data156 = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+var (
+	page  Page
+	tpage Page
+)
 
 func TestTupleCnt(t *testing.T) {
-	assert.Lenf(t, page.Slots, 4, "expected 4, got %d", len(page.Slots))
+	assert.Lenf(t, page.Slots, 5, "expected 5, got %d", len(page.Slots))
 }
 
 func TestSlotOffset(t *testing.T) {
@@ -39,55 +44,11 @@ func TestTupleHeader(t *testing.T) {
 	for i := 0; i < 17; i++ {
 		assert.Equal(t, firstTupleHeader.NullBits[i], notNullMapper[i])
 	}
-
-	secondTupleHeader := page.Tuples[1].Header
-	notNullMapper = map[int]uint8{
-		0:  1,
-		1:  1,
-		15: 1,
-		16: 1,
-	}
-	for i := 0; i < 17; i++ {
-		assert.Equal(t, secondTupleHeader.NullBits[i], notNullMapper[i])
-	}
-
-	thirdTupleHeader := page.Tuples[2].Header
-	notNullMapper = map[int]uint8{
-		0:  1,
-		15: 1,
-		16: 1,
-	}
-	for i := 0; i < 17; i++ {
-		assert.Equal(t, thirdTupleHeader.NullBits[i], notNullMapper[i])
-	}
-	fourthTupleHeader := page.Tuples[3].Header
-	notNullMapper = map[int]uint8{
-		0:  1,
-		15: 1,
-		16: 1,
-	}
-	for i := 0; i < 17; i++ {
-		assert.Equal(t, fourthTupleHeader.NullBits[i], notNullMapper[i])
-	}
 }
 
-func TestTupleData(t *testing.T) {
-	firstTupleData := page.Tuples[0].Data
-	notNullMapper := map[string]string{
-		"id": "1",
-		"f1": "1",
-	}
-	for k, v := range firstTupleData {
-		gv, ok := notNullMapper[k]
-		if !ok {
-			assert.Equal(t, v, "NULL")
-		} else {
-			assert.Equal(t, v, gv)
-		}
-	}
-
+func TestTupleDataInt(t *testing.T) {
 	secondTupleData := page.Tuples[1].Data
-	notNullMapper = map[string]string{
+	notNullMapper := map[string]string{
 		"id":  "2",
 		"f1":  "2",
 		"f15": "ltx",
@@ -102,13 +63,15 @@ func TestTupleData(t *testing.T) {
 		}
 	}
 
-	thirdTupleData := page.Tuples[2].Data
-	notNullMapper = map[string]string{
-		"id":  "3",
-		"f15": "lq",
-		"f16": "4",
+}
+
+func TestTupleDataTextVarattrib1B(t *testing.T) {
+	firstTupleData := page.Tuples[0].Data
+	notNullMapper := map[string]string{
+		"id": "1",
+		"f1": "1",
 	}
-	for k, v := range thirdTupleData {
+	for k, v := range firstTupleData {
 		gv, ok := notNullMapper[k]
 		if !ok {
 			assert.Equal(t, v, "NULL")
@@ -116,12 +79,13 @@ func TestTupleData(t *testing.T) {
 			assert.Equal(t, v, gv)
 		}
 	}
+}
 
+func TestTupleDataTextVarattrib4BNoCompressed(t *testing.T) {
 	foutrhTupleData := page.Tuples[3].Data
-	notNullMapper = map[string]string{
+	notNullMapper := map[string]string{
 		"id":  "4",
-		"f15": data156,
-		"f16": "4",
+		"f15": testdata.Data156,
 	}
 	for k, v := range foutrhTupleData {
 		gv, ok := notNullMapper[k]
@@ -133,7 +97,26 @@ func TestTupleData(t *testing.T) {
 	}
 }
 
+func TestTupleDataTextVarattrib4BCompressed(t *testing.T) {
+	foutrhTupleData := page.Tuples[4].Data
+	notNullMapper := map[string]string{
+		"id":  "5",
+		"f15": testdata.Data3120,
+	}
+	for k, v := range foutrhTupleData {
+		gv, ok := notNullMapper[k]
+		if !ok {
+			assert.Equal(t, v, "NULL")
+		} else {
+			assert.Equal(t, v, gv)
+		}
+	}
+}
+
+// 16658
 func TestMain(m *testing.M) {
+	// PrepareDataPanic()
+
 	url := "postgres://localhost:8432/litianxiang"
 	conn, err := pgx.Connect(context.Background(), url)
 	if err != nil {
@@ -143,70 +126,112 @@ func TestMain(m *testing.M) {
 	}
 	defer conn.Close(context.Background())
 
-	// test dataset !!!
-	// conn.Exec(context.Background(), "DROP TABLE test;")
-	// createSQL := `
-	//  		CREATE TABLE test (
-	//  			id serial,
-	//  			f1 int,
-	//  			f2 int,
-	//  			f3 int,
-	//  			f4 int,
-	//  			f5 int,
-	//  			f6 int,
-	//  			f7 int,
-	//  			f8 int,
-	//  			f9 int,
-	//  			f10 int,
-	//  			f11 int,
-	//  			f12 int,
-	//  			f13 int,
-	//  			f14 int,
-	//  			f15 text,
-	//  			f16 int
-	//  		);
-	//  		`
-	// _, err = conn.Exec(context.Background(), createSQL)
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// _, err = conn.Exec(context.Background(), `INSERT INTO test(f1) VALUES (1)`)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// _, err = conn.Exec(context.Background(), `INSERT INTO test(f1, f15, f16) VALUES (2, 'ltx', 3)`)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// _, err = conn.Exec(context.Background(), `INSERT INTO test(f15, f16) VALUES ('lq', 4)`)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// _, err = conn.Exec(context.Background(), fmt.Sprintf("INSERT INTO test(f15, f16) VALUES ('%s', 4)", data156))
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// panic("for insert")
-
-	var oid uint32
-	row := conn.QueryRow(context.Background(), `SELECT oid FROM pg_class WHERE relname='test'`)
-	err = row.Scan(&oid)
+	var (
+		prefix    = os.Getenv("PGDATA")
+		fpath     string
+		toastPath string
+	)
+	row := conn.QueryRow(context.Background(), `SELECT pg_relation_filepath('test')`)
+	err = row.Scan(&fpath)
 	if err != nil {
 		panic(err)
 	}
+
+	oid := strings.Split(fpath, "/")[2]
+	row = conn.QueryRow(context.Background(), `SELECT pg_relation_filepath($1)`, fmt.Sprintf("pg_toast.pg_toast_%s", oid))
+	err = row.Scan(&toastPath)
+	if err != nil {
+		panic(err)
+	}
+	fpath = filepath.Join(prefix, fpath)
+	toastPath = filepath.Join(prefix, toastPath)
 
 	err = conn.Close(context.Background())
 	if err != nil {
 		panic(err)
 	}
 
-	path := fmt.Sprintf("/home/litianxiang/usr/local/postgres/data/base/16384/%d", oid)
-	p, err := ReadPage(path)
+	p, err := ReadPage(fpath)
 	if err != nil {
 		panic(err)
 	}
 	page = p
+
+	// p, err = ReadPage(toastPath)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// tpage = p
 	os.Exit(m.Run())
+}
+
+// test dataset !!!
+func PrepareDataPanic() {
+	url := "postgres://localhost:8432/litianxiang"
+	conn, err := pgx.Connect(context.Background(), url)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
+		os.Exit(1)
+
+	}
+	defer conn.Close(context.Background())
+
+	conn.Exec(context.Background(), "DROP TABLE test;")
+	createSQL := `
+	  		CREATE TABLE test (
+	  			id serial,
+	  			f1 int,
+	  			f2 int,
+	  			f3 int,
+	  			f4 int,
+	  			f5 int,
+	  			f6 int,
+	  			f7 int,
+	  			f8 int,
+	  			f9 int,
+	  			f10 int,
+	  			f11 int,
+	  			f12 int,
+	  			f13 int,
+	  			f14 int,
+	  			f15 text,
+	  			f16 int,
+	  			f17 text
+	  		);
+	  		`
+	_, err = conn.Exec(context.Background(), createSQL)
+	if err != nil {
+		panic(err)
+	}
+	_, err = conn.Exec(context.Background(), `ALTER TABLE test ALTER f17 SET STORAGE EXTERNAL`)
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = conn.Exec(context.Background(), `INSERT INTO test(f1) VALUES (1)`)
+	if err != nil {
+		panic(err)
+	}
+	_, err = conn.Exec(context.Background(), `INSERT INTO test(f1, f15, f16) VALUES (2, 'ltx', 3)`)
+	if err != nil {
+		panic(err)
+	}
+	_, err = conn.Exec(context.Background(), `INSERT INTO test(f15, f16) VALUES ('lq', 4)`)
+	if err != nil {
+		panic(err)
+	}
+	_, err = conn.Exec(context.Background(), fmt.Sprintf("INSERT INTO test(f15) VALUES ('%s')", testdata.Data156))
+	if err != nil {
+		panic(err)
+	}
+	_, err = conn.Exec(context.Background(), fmt.Sprintf("INSERT INTO test(f15) VALUES ('%s')", testdata.Data3120))
+	if err != nil {
+		panic(err)
+	}
+	_, err = conn.Exec(context.Background(), fmt.Sprintf("INSERT INTO test(f17) VALUES ('%s')", testdata.Data3120))
+	if err != nil {
+		panic(err)
+	}
+
+	panic("for insert")
 }

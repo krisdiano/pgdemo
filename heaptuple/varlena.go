@@ -1,6 +1,8 @@
 package heaptuple
 
-import "unsafe"
+import (
+	"unsafe"
+)
 
 type Varlena interface {
 	GetLength() int
@@ -33,7 +35,10 @@ type VarAttrib4B struct {
 }
 
 func (v VarAttrib4B) GetDataLength() int {
-	return v.GetLength() - 4
+	if !v.IsCompressed() {
+		return v.GetLength() - 4
+	}
+	return v.GetLength() - 8
 }
 
 func (v VarAttrib4B) GetLength() int {
@@ -41,11 +46,19 @@ func (v VarAttrib4B) GetLength() int {
 }
 
 func (v VarAttrib4B) GetData() []byte {
-	return v.Bytes
+	if !v.IsCompressed() {
+		return v.Bytes
+	}
+	ret := make([]byte, int(v.RawSize))
+	err := Decompress(v.Bytes, ret)
+	if err != nil {
+		panic(err)
+	}
+	return ret
 }
 
 func (v VarAttrib4B) IsCompressed() bool {
-	return v.Header&0x10 == 0x10
+	return v.Header&0x03 == 0x02
 }
 
 func ParseVarlena(bins []byte) Varlena {
@@ -61,12 +74,25 @@ func ParseVarlena(bins []byte) Varlena {
 			tmp.Bytes = append(tmp.Bytes, bins[i])
 		}
 		return tmp
-	case header&0x01 == 0x00:
+	case header&0x03 == 0x00:
 		tmp := VarAttrib4B{
 			Header: **(**uint32)(unsafe.Pointer(&bins)),
 		}
 		cnt := tmp.GetDataLength()
 		bins = bins[4:]
+		for i := 0; i < cnt; i++ {
+			tmp.Bytes = append(tmp.Bytes, bins[i])
+		}
+		return tmp
+	case header&0x03 == 0x02:
+		tmp := VarAttrib4B{
+			Header: **(**uint32)(unsafe.Pointer(&bins)),
+		}
+		rawSize := bins[4:8]
+		tmp.RawSize = **(**uint32)(unsafe.Pointer(&rawSize))
+
+		cnt := tmp.GetDataLength()
+		bins = bins[8:]
 		for i := 0; i < cnt; i++ {
 			tmp.Bytes = append(tmp.Bytes, bins[i])
 		}
