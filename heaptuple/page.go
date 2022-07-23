@@ -1,63 +1,9 @@
 package heaptuple
 
 import (
-	"context"
 	"fmt"
-	"os"
 	"unsafe"
-
-	"github.com/jackc/pgx/v5"
 )
-
-var (
-	alignments []AttrAlign
-)
-
-type AttrAlign struct {
-	AttName  string
-	TypName  string
-	TypAlign string
-	TypLen   int
-}
-
-func init() {
-	ctx := context.Background()
-	url := "postgres://localhost:8432/litianxiang"
-	conn, err := pgx.Connect(ctx, url)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Unable to connect to database: %v\n", err)
-		os.Exit(1)
-
-	}
-	defer conn.Close(ctx)
-
-	var alignSQL = `
-SELECT a.attname, t.typname, t.typalign::text, t.typlen
-  FROM pg_class c
-  JOIN pg_attribute a ON (a.attrelid = c.oid)
-  JOIN pg_type t ON (t.oid = a.atttypid)
- WHERE c.relname = 'test'
-   AND a.attnum >= 0
- ORDER BY a.attnum;
-`
-	rows, err := conn.Query(ctx, alignSQL)
-	if err != nil {
-		panic(err)
-	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var item AttrAlign
-		err = rows.Scan(&item.AttName, &item.TypName, &item.TypAlign, &item.TypLen)
-		if err != nil {
-			panic(err)
-		}
-		alignments = append(alignments, item)
-	}
-	if rows.Err() != nil {
-		panic(err)
-	}
-}
 
 const (
 	MAXALIGN = 8
@@ -86,8 +32,9 @@ func (th TupleHeader) AttrCnt() uint16 {
 }
 
 type Tuple struct {
-	Header TupleHeader
-	Data   map[string]string
+	Header          TupleHeader
+	Data            map[string]string
+	ExtraToastField map[string]EXTERNAL
 }
 
 func ParseTupleHeader(bins []byte) TupleHeader {
@@ -110,8 +57,8 @@ func ParseTupleHeader2(th *TupleHeader, bins []byte) {
 	}
 }
 
-func ParseTupleData(alignments []AttrAlign, th *TupleHeader, bins []byte) (map[string]string, error) {
-	parseKV := func(idx, offset int) (k string, v string, nextOffset int) {
+func ParseTupleData(alignments []AttrAlign, th *TupleHeader, bins []byte) (map[string]string, map[string]EXTERNAL, error) {
+	parseKV := func(idx, offset int) (k string, v string, typ EXTERNAL, nextOffset int) {
 		getNextOffset := func() int {
 			if idx == len(alignments)-1 {
 				return -1
@@ -137,35 +84,46 @@ func ParseTupleData(alignments []AttrAlign, th *TupleHeader, bins []byte) (map[s
 		}
 		item := alignments[idx]
 		switch item.TypName {
+		case "oid":
+			var (
+				v     uint32
+				bytes = bins[offset : offset+item.TypLen]
+			)
+			v = **(**uint32)(unsafe.Pointer(&bytes))
+			return item.AttName, fmt.Sprintf("%d", v), VARTAG_UNUSED, getNextOffset()
 		case "int4":
 			var (
 				v     int32
 				bytes = bins[offset : offset+item.TypLen]
 			)
 			v = **(**int32)(unsafe.Pointer(&bytes))
-			return item.AttName, fmt.Sprintf("%d", v), getNextOffset()
-		case "text":
+			return item.AttName, fmt.Sprintf("%d", v), VARTAG_UNUSED, getNextOffset()
+		case "bytea", "text":
 			text := ParseVarlena(bins[offset:])
 			alignments[idx].TypLen = text.GetLength()
-			return item.AttName, string(text.GetData()), getNextOffset()
+			return item.AttName, string(text.GetData()), text.GetType(), getNextOffset()
 		}
 		panic("does not support")
 	}
 
 	var (
-		ret    = make(map[string]string)
+		kv     = make(map[string]string)
+		extra  = make(map[string]EXTERNAL)
 		k, v   string
+		typ    EXTERNAL
 		offset int
 	)
 	for i := 0; i < int(th.AttrCnt()); i++ {
 		if th.HasNullBits() && th.NullBits[i] == 0 {
-			ret[alignments[i].AttName] = "NULL"
+			kv[alignments[i].AttName] = "NULL"
+			extra[alignments[i].AttName] = VARTAG_UNUSED
 			continue
 		}
-		k, v, offset = parseKV(i, offset)
-		ret[k] = v
+		k, v, typ, offset = parseKV(i, offset)
+		kv[k] = v
+		extra[k] = typ
 	}
-	return ret, nil
+	return kv, extra, nil
 }
 
 type PageHeader struct {
@@ -208,18 +166,9 @@ type Page struct {
 	Tuples []Tuple
 }
 
-type File struct {
-	Pages []Page
-}
-
-func ReadPage(path string) (page Page, err error) {
-	rawBytes, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-
+func ReadPage(bytes []byte, alignments []AttrAlign) (page Page, err error) {
 	var ret Page
-	f := rawBytes
+	f := bytes
 	headerBytes := f[0:24]
 	f = f[24:]
 	header := **(**PageHeader)(unsafe.Pointer(&headerBytes))
@@ -235,16 +184,17 @@ func ReadPage(path string) (page Page, err error) {
 		ret.Slots[idx] = slot
 
 		tOffset := slot.GetTupleOffset()
-		tHeader := ParseTupleHeader(rawBytes[tOffset : tOffset+23])
+		tHeader := ParseTupleHeader(bytes[tOffset : tOffset+23])
 		if tHeader.HasNullBits() {
-			ParseTupleHeader2(&tHeader, rawBytes[tOffset+23:tOffset+uint16(tHeader.Hoff)])
+			ParseTupleHeader2(&tHeader, bytes[tOffset+23:tOffset+uint16(tHeader.Hoff)])
 		}
 		ret.Tuples[idx] = Tuple{Header: tHeader}
-		tData, err := ParseTupleData(alignments, &tHeader, rawBytes[tOffset+uint16(tHeader.Hoff):])
+		tData, tExtra, err := ParseTupleData(alignments, &tHeader, bytes[tOffset+uint16(tHeader.Hoff):])
 		if err != nil {
 			return Page{}, err
 		}
 		ret.Tuples[idx].Data = tData
+		ret.Tuples[idx].ExtraToastField = tExtra
 	}
 	return ret, nil
 }
